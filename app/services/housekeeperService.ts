@@ -13,6 +13,13 @@ export async function createHousekeeper(
   return (await res.json()) as Housekeeper;
 }
 
+export async function updateHousekeeper(
+  id: number,
+  housekeeper: CreateHousekeeperRequest
+): Promise<void> {
+  await apiClient.put(`/housekeepers/${id}`, housekeeper);
+}
+
 export async function deleteHousekeeper(id: number): Promise<void> {
   await apiClient.delete(`/housekeepers/${id}`);
 }

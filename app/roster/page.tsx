@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction';
-import type { DatesSetArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core';
+import type { DatesSetArg, EventClickArg, EventContentArg, EventDropArg, EventInput } from '@fullcalendar/core';
 import type { EventReceiveArg, EventResizeDoneArg } from '@fullcalendar/interaction';
 import { Building2, CalendarDays, ChevronDown, Clock, DoorOpen, Home, Layers, Loader2, MapPin, Sparkles, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -192,6 +192,8 @@ export default function RosterPage() {
   const areaHierarchy = useMemo(() => buildAreaHierarchy(visibleAreas), [visibleAreas]);
 
   const calendarEvents = useMemo(() => mapTasksToEvents(visibleTasks), [visibleTasks]);
+  const breakEvents = useMemo(() => buildBreakEvents(weekStartDate), [weekStartDate]);
+  const timetableEvents = useMemo(() => [...breakEvents, ...calendarEvents], [breakEvents, calendarEvents]);
 
   function toggleAreaSection(key: string) {
     setExpandedAreaSections((current) => {
@@ -333,6 +335,20 @@ export default function RosterPage() {
     }
   }
 
+  async function deleteRosterTask(taskId: number) {
+    const task = currentRoster?.rosterTasks.find((item) => item.id === taskId);
+    if (!task) return;
+
+    const updatedTasks = (currentRoster?.rosterTasks ?? []).filter((item) => item.id !== taskId);
+    try {
+      await saveRosterTasks(updatedTasks);
+      if (editingTask?.id === taskId) closeEditDialog();
+      toast.success('Roster task removed');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete roster task.');
+    }
+  }
+
   function handleEventClick(click: EventClickArg) {
     const taskId = Number(click.event.id);
     const task = currentRoster?.rosterTasks.find((item) => item.id === taskId);
@@ -392,15 +408,7 @@ export default function RosterPage() {
 
   async function handleDeleteTask() {
     if (!editingTask) return;
-    const updatedTasks = (currentRoster?.rosterTasks ?? []).filter((task) => task.id !== editingTask.id);
-
-    try {
-      await saveRosterTasks(updatedTasks);
-      closeEditDialog();
-      toast.success('Roster task removed');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to delete roster task.');
-    }
+    await deleteRosterTask(editingTask.id);
   }
 
   function closeEditDialog() {
@@ -513,11 +521,12 @@ export default function RosterPage() {
                 selectable
                 eventResizableFromStart
                 allDaySlot={false}
-                events={calendarEvents}
+                events={timetableEvents}
                 eventReceive={handleExternalReceive}
                 eventDrop={handleEventDrop}
                 eventResize={handleEventResize}
                 eventClick={handleEventClick}
+                eventContent={(arg) => <RosterEventContent eventInfo={arg} onDelete={deleteRosterTask} />}
                 datesSet={handleCalendarDatesSet}
                 slotMinTime="06:00:00"
                 slotMaxTime="16:00:00"
@@ -613,6 +622,40 @@ export default function RosterPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+    </div>
+  );
+}
+
+function RosterEventContent({
+  eventInfo,
+  onDelete,
+}: {
+  eventInfo: EventContentArg;
+  onDelete: (taskId: number) => void;
+}) {
+  if (eventInfo.event.display === 'background') return null;
+
+  const taskId = Number(eventInfo.event.id);
+
+  return (
+    <div className="group flex h-full min-w-0 items-start gap-1 p-1">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-semibold leading-tight">{eventInfo.timeText}</div>
+        <div className="line-clamp-3 text-xs leading-tight">{eventInfo.event.title}</div>
+      </div>
+      {Number.isFinite(taskId) && taskId > 0 && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(taskId);
+          }}
+          className="rounded bg-white/80 p-0.5 text-slate-700 opacity-0 shadow-sm transition hover:bg-white hover:text-red-600 group-hover:opacity-100 focus:opacity-100 dark:bg-neutral-950/80 dark:text-neutral-200"
+          aria-label={`Delete ${eventInfo.event.title}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       )}
     </div>
   );
@@ -914,6 +957,28 @@ function mapTasksToEvents(tasks: RosterTask[]): EventInput[] {
       textColor: style.eventTextColor,
       extendedProps: task,
     };
+  });
+}
+
+function buildBreakEvents(weekStartDate: string): EventInput[] {
+  const weekStart = parseDateInput(weekStartDate);
+  const breaks = [
+    { label: 'Morning break', start: '10:00', end: '10:30' },
+    { label: 'Lunch break', start: '13:00', end: '13:30' },
+  ];
+
+  return Array.from({ length: 7 }).flatMap((_, dayIndex) => {
+    const date = addMinutes(weekStart, dayIndex * 24 * 60);
+    const dateInput = toDateInput(date);
+
+    return breaks.map((breakItem) => ({
+      id: `break-${dateInput}-${breakItem.start}`,
+      title: breakItem.label,
+      start: combineDateTime(dateInput, breakItem.start),
+      end: combineDateTime(dateInput, breakItem.end),
+      display: 'background',
+      classNames: ['roster-break-event'],
+    }));
   });
 }
 

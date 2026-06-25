@@ -51,6 +51,40 @@
   height: 1.8rem;
 }
 
+.roster-calendar .fc-col-header-cell {
+  background: color-mix(in oklab, var(--primary) 7%, white);
+}
+
+.roster-calendar .fc-col-header-cell-cushion {
+  display: block;
+  padding: 0.75rem 0.5rem;
+  color: var(--foreground);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.roster-calendar .fc-timegrid-col.fc-day-today {
+  background: color-mix(in oklab, var(--primary) 5%, transparent);
+}
+
+.roster-calendar .fc .fc-bg-event.roster-break-event {
+  background: color-mix(in oklab, var(--primary) 18%, white);
+  opacity: 0.72;
+}
+
+.roster-calendar .fc-v-event .fc-event-main {
+  height: 100%;
+}
+
+.dark .roster-calendar .fc-col-header-cell {
+  background: color-mix(in oklab, var(--primary) 12%, black);
+}
+
+.dark .roster-calendar .fc .fc-bg-event.roster-break-event {
+  background: color-mix(in oklab, var(--primary) 28%, black);
+  opacity: 0.6;
+}
+
 :root {
   --radius: 0.5rem;
   --background: oklch(1 0 0);
