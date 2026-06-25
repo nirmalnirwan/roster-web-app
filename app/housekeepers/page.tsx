@@ -10,6 +10,7 @@ import {
   createHousekeeper,
   deleteHousekeeper,
   getHousekeepers,
+  updateHousekeeper,
 } from '@/app/services/housekeeperService';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -42,6 +43,7 @@ export default function HousekeepersPage() {
   const [housekeepers, setHousekeepers] = useState<Housekeeper[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<HousekeeperFormState>(initialFormState);
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitting, setSubmitting] = useState(false);
@@ -97,10 +99,46 @@ export default function HousekeepersPage() {
     setSubmitMessage(null);
   };
 
+  const openCreateForm = () => {
+    setEditingId(null);
+    setForm(initialFormState);
+    setErrors({});
+    setSubmitMessage(null);
+    setIsFormOpen(true);
+  };
+
+  const openEditForm = (housekeeper: Housekeeper) => {
+    setEditingId(housekeeper.id);
+    setForm({
+      name: housekeeper.name,
+      phone: housekeeper.phone,
+      email: housekeeper.email,
+      status: housekeeper.status,
+      employmentType: housekeeper.employmentType,
+      password: '',
+    });
+    setErrors({});
+    setSubmitMessage(null);
+    setIsFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setEditingId(null);
+    setForm(initialFormState);
+    setErrors({});
+    setSubmitMessage(null);
+    setIsFormOpen(false);
+  };
+
+  const refreshHousekeepers = async () => {
+    const data = await getHousekeepers();
+    setHousekeepers(data);
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const validationErrors = validateForm(trimmedForm);
+    const validationErrors = validateForm(trimmedForm, Boolean(editingId));
     setErrors(validationErrors);
     setSubmitMessage(null);
 
@@ -120,6 +158,14 @@ export default function HousekeepersPage() {
         status: trimmedForm.status,
         employmentType: trimmedForm.employmentType,
       };
+
+      if (editingId) {
+        await updateHousekeeper(editingId, housekeeperPayload);
+        await refreshHousekeepers();
+        closeForm();
+        toast.success('Housekeeper updated successfully');
+        return;
+      }
 
       createdHousekeeper = await createHousekeeper(housekeeperPayload);
 
@@ -160,6 +206,21 @@ export default function HousekeepersPage() {
     }
   };
 
+  const handleDelete = async (housekeeper: Housekeeper) => {
+    if (!confirm(`Delete ${housekeeper.name}?`)) return;
+
+    setSubmitting(true);
+    try {
+      await deleteHousekeeper(housekeeper.id);
+      setHousekeepers((current) => current.filter((item) => item.id !== housekeeper.id));
+      toast.success('Housekeeper removed');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove housekeeper.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (loading) {
     return <div className="py-12 text-center">Loading housekeepers...</div>;
   }
@@ -175,13 +236,10 @@ export default function HousekeepersPage() {
         </div>
         <Button
           className="bg-blue-600 hover:bg-blue-700"
-          onClick={() => {
-            setIsFormOpen((open) => !open);
-            setSubmitMessage(null);
-          }}
+          onClick={openCreateForm}
         >
-          {isFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {isFormOpen ? 'Cancel' : 'Add Housekeeper'}
+          <Plus className="h-4 w-4" />
+          Add Housekeeper
         </Button>
       </div>
 
@@ -192,99 +250,109 @@ export default function HousekeepersPage() {
       )}
 
       {isFormOpen && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <UserPlus className="h-5 w-5" />
-              Add Housekeeper
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2" noValidate>
-              <Field label="Full name" error={errors.name}>
-                <Input
-                  value={form.name}
-                  onChange={(event) => updateField('name', event.target.value)}
-                  placeholder="Jane Smith"
-                  aria-invalid={Boolean(errors.name)}
-                  disabled={submitting}
-                />
-              </Field>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <Card className="max-h-[90vh] w-full max-w-3xl overflow-y-auto">
+            <CardHeader className="flex-row items-start justify-between">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <UserPlus className="h-5 w-5" />
+                {editingId ? 'Edit Housekeeper' : 'Add Housekeeper'}
+              </CardTitle>
+              <Button variant="ghost" size="icon" onClick={closeForm} aria-label="Close housekeeper form">
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2" noValidate>
+                <Field label="Full name" error={errors.name}>
+                  <Input
+                    value={form.name}
+                    onChange={(event) => updateField('name', event.target.value)}
+                    placeholder="Jane Smith"
+                    aria-invalid={Boolean(errors.name)}
+                    disabled={submitting}
+                  />
+                </Field>
 
-              <Field label="Email" error={errors.email}>
-                <Input
-                  type="email"
-                  value={form.email}
-                  onChange={(event) => updateField('email', event.target.value)}
-                  placeholder="jane@example.com"
-                  aria-invalid={Boolean(errors.email)}
-                  disabled={submitting}
-                />
-              </Field>
+                <Field label="Email" error={errors.email}>
+                  <Input
+                    type="email"
+                    value={form.email}
+                    onChange={(event) => updateField('email', event.target.value)}
+                    placeholder="jane@example.com"
+                    aria-invalid={Boolean(errors.email)}
+                    disabled={submitting}
+                  />
+                </Field>
 
-              <Field label="Phone" error={errors.phone}>
-                <Input
-                  type="tel"
-                  value={form.phone}
-                  onChange={(event) => updateField('phone', event.target.value)}
-                  placeholder="+64 21 123 4567"
-                  aria-invalid={Boolean(errors.phone)}
-                  disabled={submitting}
-                />
-              </Field>
+                <Field label="Phone" error={errors.phone}>
+                  <Input
+                    type="tel"
+                    value={form.phone}
+                    onChange={(event) => updateField('phone', event.target.value)}
+                    placeholder="+64 21 123 4567"
+                    aria-invalid={Boolean(errors.phone)}
+                    disabled={submitting}
+                  />
+                </Field>
 
-              <Field label="Temporary password" error={errors.password}>
-                <Input
-                  type="password"
-                  value={form.password}
-                  onChange={(event) => updateField('password', event.target.value)}
-                  aria-invalid={Boolean(errors.password)}
-                  disabled={submitting}
-                />
-              </Field>
-
-              <Field label="Employment type" error={errors.employmentType}>
-                <select
-                  value={form.employmentType}
-                  onChange={(event) =>
-                    updateField('employmentType', event.target.value as EmployeeType)
-                  }
-                  className="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-invalid={Boolean(errors.employmentType)}
-                  disabled={submitting}
-                >
-                  <option value="Permanent">Permanent</option>
-                  <option value="Casual">Casual</option>
-                </select>
-              </Field>
-
-              <Field label="Status" error={errors.status}>
-                <select
-                  value={form.status}
-                  onChange={(event) => updateField('status', event.target.value)}
-                  className="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-invalid={Boolean(errors.status)}
-                  disabled={submitting}
-                >
-                  <option value="Active">Active</option>
-                  <option value="Inactive">Inactive</option>
-                </select>
-              </Field>
-
-              <div className="flex flex-col gap-3 md:col-span-2">
-                {submitMessage && (
-                  <p className="rounded-md border bg-muted px-3 py-2 text-sm">{submitMessage}</p>
+                {!editingId && (
+                  <Field label="Temporary password" error={errors.password}>
+                    <Input
+                      type="password"
+                      value={form.password}
+                      onChange={(event) => updateField('password', event.target.value)}
+                      aria-invalid={Boolean(errors.password)}
+                      disabled={submitting}
+                    />
+                  </Field>
                 )}
-                <div className="flex justify-end">
-                  <Button type="submit" disabled={submitting}>
-                    {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {submitting ? 'Creating...' : 'Create Housekeeper'}
-                  </Button>
+
+                <Field label="Employment type" error={errors.employmentType}>
+                  <select
+                    value={form.employmentType}
+                    onChange={(event) =>
+                      updateField('employmentType', event.target.value as EmployeeType)
+                    }
+                    className="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-invalid={Boolean(errors.employmentType)}
+                    disabled={submitting}
+                  >
+                    <option value="Permanent">Permanent</option>
+                    <option value="Casual">Casual</option>
+                  </select>
+                </Field>
+
+                <Field label="Status" error={errors.status}>
+                  <select
+                    value={form.status}
+                    onChange={(event) => updateField('status', event.target.value)}
+                    className="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-invalid={Boolean(errors.status)}
+                    disabled={submitting}
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </Field>
+
+                <div className="flex flex-col gap-3 md:col-span-2">
+                  {submitMessage && (
+                    <p className="rounded-md border bg-muted px-3 py-2 text-sm">{submitMessage}</p>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={closeForm} disabled={submitting}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={submitting}>
+                      {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {submitting ? 'Saving...' : editingId ? 'Save Changes' : 'Create Housekeeper'}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       <div className="space-y-3">
@@ -316,8 +384,8 @@ export default function HousekeepersPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-2 sm:self-center">
-                  <Button size="icon-sm" variant="outline" aria-label={`Edit ${housekeeper.name}`} title="Edit housekeeper"><Edit3 className="h-4 w-4" /></Button>
-                  <Button size="icon-sm" variant="destructive" aria-label={`Remove ${housekeeper.name}`} title="Remove housekeeper"><Trash2 className="h-4 w-4" /></Button>
+                  <Button size="icon-sm" variant="outline" onClick={() => openEditForm(housekeeper)} disabled={submitting} aria-label={`Edit ${housekeeper.name}`} title="Edit housekeeper"><Edit3 className="h-4 w-4" /></Button>
+                  <Button size="icon-sm" variant="destructive" onClick={() => handleDelete(housekeeper)} disabled={submitting} aria-label={`Remove ${housekeeper.name}`} title="Remove housekeeper"><Trash2 className="h-4 w-4" /></Button>
                 </div>
               </CardContent>
             </Card>
@@ -346,7 +414,7 @@ function Field({
   );
 }
 
-function validateForm(form: HousekeeperFormState): FormErrors {
+function validateForm(form: HousekeeperFormState, isEditing: boolean): FormErrors {
   const errors: FormErrors = {};
 
   if (!form.name) errors.name = 'Full name is required.';
@@ -354,8 +422,8 @@ function validateForm(form: HousekeeperFormState): FormErrors {
   else if (!emailPattern.test(form.email)) errors.email = 'Enter a valid email address.';
   if (!form.phone) errors.phone = 'Phone is required.';
   else if (!phonePattern.test(form.phone)) errors.phone = 'Enter a valid phone number.';
-  if (!form.password) errors.password = 'Password is required.';
-  else if (!passwordPattern.test(form.password)) {
+  if (!isEditing && !form.password) errors.password = 'Password is required.';
+  else if (!isEditing && !passwordPattern.test(form.password)) {
     errors.password = 'Use at least 8 characters with uppercase, lowercase, and a number.';
   }
   if (!form.status) errors.status = 'Status is required.';
