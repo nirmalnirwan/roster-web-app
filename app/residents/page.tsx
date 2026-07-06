@@ -25,6 +25,7 @@ const defaultForm = {
   roomNumber: '',
   building: '',
   cleaningFrequency: '',
+  status: 'Active',
   notes: '',
   assignmentValue: '',
 };
@@ -57,9 +58,11 @@ export default function ResidentsPage() {
   }, [assignableAreas]);
 
   const residentHierarchy = useMemo(
-    () => buildResidentHierarchy(assignableAreas, residents),
+    () => buildResidentHierarchy(assignableAreas, residents.filter(isActiveResident)),
     [assignableAreas, residents]
   );
+
+  const activeResidentCount = useMemo(() => residents.filter(isActiveResident).length, [residents]);
 
   useEffect(() => {
     let active = true;
@@ -101,6 +104,7 @@ export default function ResidentsPage() {
       roomNumber: resident.roomNumber,
       building: resident.building,
       cleaningFrequency: resident.cleaningFrequency,
+      status: resident.status || 'Active',
       notes: resident.notes,
       assignmentValue: resident.unitId ? `Unit:${resident.unitId}` : `Apartment:${resident.apartmentId}`,
     });
@@ -124,6 +128,7 @@ export default function ResidentsPage() {
       roomNumber: form.roomNumber.trim(),
       building: form.building.trim(),
       cleaningFrequency: form.cleaningFrequency.trim(),
+      status: form.status.trim(),
       notes: form.notes.trim(),
     };
     const validationErrors = validateResidentForm(normalized);
@@ -150,14 +155,14 @@ export default function ResidentsPage() {
   };
 
   const handleDelete = async (resident: Resident) => {
-    if (!confirm(`Delete ${resident.name}?`)) return;
+    if (!confirm(`Mark ${resident.name} as inactive?`)) return;
     setSubmitting(true);
     try {
       await deleteResident(resident.id);
-      toast.success('Resident removed');
+      toast.success('Resident marked inactive');
       await refresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to delete resident');
+      toast.error(error instanceof Error ? error.message : 'Unable to update resident status');
     } finally {
       setSubmitting(false);
     }
@@ -234,6 +239,17 @@ export default function ResidentsPage() {
                     ))}
                   </select>
                 </Field>
+                <Field label="Status" error={errors.status}>
+                  <select
+                    value={form.status}
+                    onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
+                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    disabled={submitting}
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </Field>
                 <Field label="Room number">
                   <Input value={form.roomNumber} onChange={(event) => setForm((current) => ({ ...current, roomNumber: event.target.value }))} disabled={submitting} />
                 </Field>
@@ -262,14 +278,14 @@ export default function ResidentsPage() {
             Residents by Location
           </CardTitle>
           <CardDescription>
-            {residents.length} record{residents.length === 1 ? '' : 's'} grouped by Unit and Apartment assignments.
+            {activeResidentCount} active record{activeResidentCount === 1 ? '' : 's'} grouped by Unit and Apartment assignments.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
             <div className="py-8 text-center text-sm text-muted-foreground">Loading...</div>
-          ) : residents.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">No residents have been created yet.</div>
+          ) : activeResidentCount === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">No active residents to display.</div>
           ) : (
             <ResidentHierarchyTree
               hierarchy={residentHierarchy}
@@ -458,6 +474,12 @@ function ResidentRow({
           <div className="font-medium text-foreground">{resident.name}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <Badge variant="secondary">{resident.cleaningFrequency}</Badge>
+            <Badge
+              variant="outline"
+              className={resident.status === 'Inactive' ? 'border-slate-200 bg-slate-100 text-slate-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}
+            >
+              {resident.status || 'Active'}
+            </Badge>
             <Badge variant="outline">{resident.assignmentName}</Badge>
           </div>
           {resident.notes && <p className="mt-2 text-sm text-muted-foreground">{resident.notes}</p>}
@@ -467,7 +489,7 @@ function ResidentRow({
         <Button size="icon-sm" variant="ghost" onClick={() => onEdit(resident)} disabled={submitting} aria-label={`Edit ${resident.name}`}>
           <Edit className="h-4 w-4" />
         </Button>
-        <Button size="icon-sm" variant="ghost" onClick={() => onDelete(resident)} disabled={submitting} aria-label={`Delete ${resident.name}`}>
+        <Button size="icon-sm" variant="ghost" onClick={() => onDelete(resident)} disabled={submitting || resident.status === 'Inactive'} aria-label={`Mark ${resident.name} inactive`}>
           <Trash2 className="h-4 w-4" />
         </Button>
       </div>
@@ -538,6 +560,10 @@ function countFloorResidents(floor: ResidentFloorNode) {
   return floor.areas.reduce((total, area) => total + area.residents.length, 0);
 }
 
+function isActiveResident(resident: Resident) {
+  return (resident.status || 'Active') === 'Active';
+}
+
 function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
   return (
     <label className="space-y-2 text-sm font-medium">
@@ -553,6 +579,7 @@ function validateResidentForm(form: ResidentForm) {
   if (!form.name) errors.name = 'Resident name is required.';
   if (!form.assignmentValue) errors.assignmentValue = 'Unit or Apartment assignment is required.';
   if (!form.cleaningFrequency) errors.cleaningFrequency = 'Cleaning frequency is required.';
+  if (!form.status) errors.status = 'Status is required.';
   return errors;
 }
 
@@ -564,6 +591,7 @@ function toResidentRequest(form: ResidentForm): ResidentRequest {
     roomNumber: form.roomNumber,
     building: form.building,
     cleaningFrequency: form.cleaningFrequency,
+    status: form.status,
     notes: form.notes,
     unitId: assignmentType === 'Unit' ? assignmentId : undefined,
     apartmentId: assignmentType === 'Apartment' ? assignmentId : undefined,

@@ -637,11 +637,20 @@ function RosterEventContent({
   if (eventInfo.event.display === 'background') return null;
 
   const taskId = Number(eventInfo.event.id);
+  const residentStatus = eventInfo.event.extendedProps.residentStatus as string | undefined;
+  const residentInactive = residentStatus === 'Inactive';
 
   return (
     <div className="group flex h-full min-w-0 items-start gap-1 p-1">
       <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-semibold leading-tight">{eventInfo.timeText}</div>
+        <div className="flex min-w-0 items-center gap-1">
+          <span className="truncate text-xs font-semibold leading-tight">{eventInfo.timeText}</span>
+          {residentInactive && (
+            <span className="rounded bg-red-100 px-1 text-[10px] font-semibold uppercase leading-4 text-red-700">
+              Inactive resident
+            </span>
+          )}
+        </div>
         <div className="line-clamp-3 text-xs leading-tight">{eventInfo.event.title}</div>
       </div>
       {Number.isFinite(taskId) && taskId > 0 && (
@@ -938,6 +947,7 @@ function mapTasksToEvents(tasks: RosterTask[]): EventInput[] {
   return tasks.map((task) => {
     const start = combineDateTime(toDateInput(new Date(task.scheduledDate)), task.startTime);
     const end = combineDateTime(toDateInput(new Date(task.scheduledDate)), task.endTime);
+    const residentInactive = task.residentStatus === 'Inactive';
     const style = task.areaType
       ? ROSTER_AREA_STYLES[task.areaType]
       : ROSTER_AREA_STYLES.CommonArea;
@@ -947,14 +957,15 @@ function mapTasksToEvents(tasks: RosterTask[]): EventInput[] {
       title: [
         task.areaName,
         task.taskName,
-        task.residentName,
+        residentInactive && task.residentName ? `${task.residentName} (Inactive)` : task.residentName,
         formatDuration(task.startTime, task.endTime),
       ].filter(Boolean).join(' / '),
       start,
       end,
       backgroundColor: style.eventBackgroundColor,
-      borderColor: style.eventBorderColor,
+      borderColor: residentInactive ? '#dc2626' : style.eventBorderColor,
       textColor: style.eventTextColor,
+      classNames: residentInactive ? ['roster-event-inactive-resident'] : [],
       extendedProps: task,
     };
   });

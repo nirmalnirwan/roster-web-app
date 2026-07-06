@@ -23,6 +23,7 @@ export interface Resident {
   roomNumber: string;
   building: string;
   cleaningFrequency: string;
+  status: string;
   notes: string;
   unitId?: number;
   unitName?: string;
@@ -37,6 +38,7 @@ export interface ResidentRequest {
   roomNumber: string;
   building: string;
   cleaningFrequency: string;
+  status: string;
   notes: string;
   unitId?: number;
   apartmentId?: number;
@@ -216,6 +218,7 @@ export interface RosterTask {
   areaName: string;
   residentId?: number;
   residentName?: string;
+  residentStatus?: string;
   scheduledDate: string;
   startTime: string; // HH:mm:ss format
   endTime: string;

@@ -76,6 +76,10 @@
   height: 100%;
 }
 
+.roster-calendar .fc-event.roster-event-inactive-resident {
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+
 .dark .roster-calendar .fc-col-header-cell {
   background: color-mix(in oklab, var(--primary) 12%, black);
 }
