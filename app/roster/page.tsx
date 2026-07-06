@@ -13,7 +13,7 @@ import useRequireAuth from '../hooks/useRequireAuth';
 import { getApartments, getCommonAreas, getUnits } from '../services/areaService';
 import { getCleaningTasks } from '../services/cleaningTaskService';
 import { getHousekeepers } from '../services/housekeeperService';
-import { createRoster, getRoster, getRosterByWeek, updateRoster } from '../services/rosterService';
+import { createRoster, getRoster, getRosterByWeek, getRosters, updateRoster } from '../services/rosterService';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,6 +39,7 @@ type CleaningArea = {
   cleaningTaskId?: number;
   cleaningTaskName?: string;
   cleaningTaskDuration?: number;
+  cleaningTaskFrequency?: string;
   residentId?: number;
   residentName?: string;
   locationTypeId: number;
@@ -78,11 +79,13 @@ export default function RosterPage() {
 
   const externalAreasRef = useRef<HTMLDivElement | null>(null);
   const [currentRoster, setCurrentRoster] = useState<Roster | null>(null);
+  const [allRosters, setAllRosters] = useState<Roster[]>([]);
   const [housekeepers, setHousekeepers] = useState<Housekeeper[]>([]);
   const [cleaningTasks, setCleaningTasks] = useState<CleaningTask[]>([]);
   const [areas, setAreas] = useState<CleaningArea[]>([]);
   const [selectedHousekeeperId, setSelectedHousekeeperId] = useState(0);
   const [weekStartDate, setWeekStartDate] = useState(() => toDateInput(getStartOfWeek(new Date())));
+  const [availabilityDate, setAvailabilityDate] = useState(() => toDateInput(getStartOfWeek(new Date())));
   const [areaFilter, setAreaFilter] = useState<RosterAreaType | 'All'>('All');
   const [loading, setLoading] = useState(true);
   const [loadingRoster, setLoadingRoster] = useState(false);
@@ -96,12 +99,13 @@ export default function RosterPage() {
 
     async function loadBuilderData() {
       try {
-        const [housekeeperData, cleaningTaskData, commonAreaData, unitData, apartmentData] = await Promise.all([
+        const [housekeeperData, cleaningTaskData, commonAreaData, unitData, apartmentData, rosterData] = await Promise.all([
           getHousekeepers(),
           getCleaningTasks(),
           getCommonAreas(),
           getUnits(),
           getApartments(),
+          getRosters(),
         ]);
 
         if (!active) return;
@@ -109,6 +113,7 @@ export default function RosterPage() {
         setHousekeepers(housekeeperData);
         setCleaningTasks(cleaningTaskData);
         setAreas(buildCleaningAreas(commonAreaData, unitData, apartmentData, cleaningTaskData));
+        setAllRosters(rosterData);
         setSelectedHousekeeperId(housekeeperData[0]?.id ?? 0);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load roster builder data.');
@@ -184,12 +189,16 @@ export default function RosterPage() {
   const activeHousekeeper = housekeepers.find((housekeeper) => housekeeper.id === selectedHousekeeperId);
 
   const visibleAreas = useMemo(
-    () => areas.filter((area) => areaFilter === 'All' || area.areaType === areaFilter),
-    [areas, areaFilter]
+    () => areas.filter((area) =>
+      (areaFilter === 'All' || area.areaType === areaFilter) &&
+      isCleaningAreaAvailable(area, allRosters, weekStartDate, availabilityDate)
+    ),
+    [allRosters, areas, areaFilter, availabilityDate, weekStartDate]
   );
 
   const visibleTasks = useMemo(() => currentRoster?.rosterTasks ?? [], [currentRoster]);
   const areaHierarchy = useMemo(() => buildAreaHierarchy(visibleAreas), [visibleAreas]);
+  const availabilityDateOptions = useMemo(() => buildWeekDateOptions(weekStartDate), [weekStartDate]);
 
   const calendarEvents = useMemo(() => mapTasksToEvents(visibleTasks), [visibleTasks]);
   const breakEvents = useMemo(() => buildBreakEvents(weekStartDate), [weekStartDate]);
@@ -231,11 +240,13 @@ export default function RosterPage() {
     try {
       if (targetRoster?.id) {
         await updateRoster(targetRoster.id, payload);
-        setCurrentRoster(await getRoster(targetRoster.id));
+        const updatedRoster = await getRoster(targetRoster.id);
+        setCurrentRoster(updatedRoster);
       } else {
         const created = await createRoster(payload);
         setCurrentRoster(created);
       }
+      setAllRosters(await getRosters());
       toast.success('Roster saved');
     } finally {
       setSaving(false);
@@ -272,6 +283,12 @@ export default function RosterPage() {
     }
 
     const start = info.event.start;
+    if (!isCleaningAreaAvailable(droppedArea, allRosters, toDateInput(getStartOfWeek(start)), toDateInput(start))) {
+      toast.error('This cleaning area task is already scheduled for the selected frequency period.');
+      return;
+    }
+
+    setAvailabilityDate(toDateInput(start));
     const end = addMinutes(start, positiveDuration(assignedCleaningTask.estimatedDuration));
     const task = buildRosterTask({
       area: droppedArea,
@@ -305,12 +322,21 @@ export default function RosterPage() {
 
     setCurrentRoster(null);
     setWeekStartDate(visibleWeekStartDate);
+    setAvailabilityDate(visibleWeekStartDate);
   }
 
   async function handleEventDrop(change: EventDropArg) {
     if (!change.event.start || !change.event.end) return;
 
     const taskId = Number(change.event.id);
+    const existingTask = currentRoster?.rosterTasks.find((task) => task.id === taskId);
+    if (existingTask && !isRosterTaskAvailableForMove(existingTask, allRosters, change.event.start)) {
+      change.revert();
+      toast.error('This cleaning area task is already scheduled for the selected frequency period.');
+      return;
+    }
+
+    setAvailabilityDate(toDateInput(change.event.start));
     const updatedTasks = updateTaskTime(currentRoster?.rosterTasks ?? [], taskId, change.event.start, change.event.end);
 
     try {
@@ -475,10 +501,25 @@ export default function RosterPage() {
               ))}
             </div>
 
+            <label className="space-y-2 text-xs font-medium text-muted-foreground">
+              Daily availability date
+              <select
+                value={availabilityDate}
+                onChange={(event) => setAvailabilityDate(event.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                {availabilityDateOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <div ref={externalAreasRef} className="max-h-[760px] overflow-y-auto pr-1">
               {visibleAreas.length === 0 ? (
                 <div className="rounded-md bg-slate-50 px-3 py-4 text-sm text-muted-foreground dark:bg-slate-800">
-                  No cleaning areas available.
+                  No cleaning areas available for this frequency period.
                 </div>
               ) : (
                 <CleaningAreaTree
@@ -784,9 +825,13 @@ function DraggableAreaItem({ area }: { area: CleaningArea }) {
       data-task-duration={area.cleaningTaskDuration ?? 60}
       data-title={`${area.name} - ${area.cleaningTaskName || 'Cleaning task'}`}
     >
-      <div className="truncate text-sm font-medium">{area.name}</div>
-      <div className="truncate text-xs text-muted-foreground">
-        {area.cleaningTaskName || 'No task'}{area.residentName ? ` / ${area.residentName}` : ''}
+      <div className="truncate text-[13px] font-semibold leading-5">{area.name}</div>
+      <div className="truncate text-[11px] leading-4 text-muted-foreground">
+        Task: {area.cleaningTaskName || 'No task'}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-muted-foreground">
+        <span>{area.cleaningTaskFrequency || 'No frequency'}</span>
+        {area.residentName && <span className="truncate">Resident: {area.residentName}</span>}
       </div>
     </div>
   );
@@ -845,6 +890,104 @@ function buildAreaHierarchy(areas: CleaningArea[]): AreaLocationNode[] {
     }));
 }
 
+function buildWeekDateOptions(weekStartDate: string) {
+  const weekStart = parseDateInput(weekStartDate);
+  return Array.from({ length: 7 }).map((_, dayIndex) => {
+    const date = addMinutes(weekStart, dayIndex * 24 * 60);
+    return {
+      value: toDateInput(date),
+      label: date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
+    };
+  });
+}
+
+function isCleaningAreaAvailable(
+  area: CleaningArea,
+  rosters: Roster[],
+  weekStartDate: string,
+  targetDate: string
+) {
+  if (!area.cleaningTaskId) return true;
+
+  const frequency = normalizeFrequency(area.cleaningTaskFrequency);
+  const weekStart = parseDateInput(weekStartDate);
+  const previousWeekStart = addMinutes(weekStart, -7 * 24 * 60);
+  const currentWeekEnd = addMinutes(weekStart, 7 * 24 * 60);
+  const previousWeekEnd = weekStart;
+
+  return !rosters.some((roster) =>
+    roster.rosterTasks.some((task) => {
+      if (!isSameAreaTask(area, task)) return false;
+
+      const scheduledDate = parseDateInput(toDateInput(new Date(task.scheduledDate)));
+
+      if (frequency === 'Daily') {
+        return toDateInput(scheduledDate) === targetDate;
+      }
+
+      if (frequency === 'Fortnightly') {
+        return (
+          (scheduledDate >= previousWeekStart && scheduledDate < previousWeekEnd) ||
+          (scheduledDate >= weekStart && scheduledDate < currentWeekEnd)
+        );
+      }
+
+      return scheduledDate >= weekStart && scheduledDate < currentWeekEnd;
+    })
+  );
+}
+
+function isSameAreaTask(area: CleaningArea, task: RosterTask) {
+  return task.taskId === area.cleaningTaskId && task.areaType === area.areaType && getRosterTaskAreaId(task) === area.id;
+}
+
+function isRosterTaskAvailableForMove(taskToMove: RosterTask, rosters: Roster[], targetStart: Date) {
+  const weekStartDate = toDateInput(getStartOfWeek(targetStart));
+  const targetDate = toDateInput(targetStart);
+  const frequency = normalizeFrequency(taskToMove.frequencyType);
+  const weekStart = parseDateInput(weekStartDate);
+  const previousWeekStart = addMinutes(weekStart, -7 * 24 * 60);
+  const currentWeekEnd = addMinutes(weekStart, 7 * 24 * 60);
+  const previousWeekEnd = weekStart;
+
+  return !rosters.some((roster) =>
+    roster.rosterTasks.some((task) => {
+      if (task.id === taskToMove.id) return false;
+      if (task.taskId !== taskToMove.taskId || task.areaType !== taskToMove.areaType) return false;
+      if (getRosterTaskAreaId(task) !== getRosterTaskAreaId(taskToMove)) return false;
+
+      const scheduledDate = parseDateInput(toDateInput(new Date(task.scheduledDate)));
+
+      if (frequency === 'Daily') {
+        return toDateInput(scheduledDate) === targetDate;
+      }
+
+      if (frequency === 'Fortnightly') {
+        return (
+          (scheduledDate >= previousWeekStart && scheduledDate < previousWeekEnd) ||
+          (scheduledDate >= weekStart && scheduledDate < currentWeekEnd)
+        );
+      }
+
+      return scheduledDate >= weekStart && scheduledDate < currentWeekEnd;
+    })
+  );
+}
+
+function getRosterTaskAreaId(task: RosterTask) {
+  if (task.areaType === 'CommonArea') return task.commonAreaId;
+  if (task.areaType === 'Unit') return task.unitId;
+  if (task.areaType === 'Apartment') return task.apartmentId;
+  return undefined;
+}
+
+function normalizeFrequency(frequency?: string) {
+  const normalized = (frequency || 'Weekly').trim().toLowerCase();
+  if (normalized === 'daily') return 'Daily';
+  if (normalized === 'fortnightly') return 'Fortnightly';
+  return 'Weekly';
+}
+
 function buildCleaningAreas(
   commonAreas: CommonArea[],
   units: Unit[],
@@ -861,6 +1004,7 @@ function buildCleaningAreas(
       cleaningTaskId: area.cleaningTaskId,
       cleaningTaskName: area.cleaningTaskName,
       cleaningTaskDuration: area.cleaningTaskId ? taskById.get(area.cleaningTaskId)?.estimatedDuration : undefined,
+      cleaningTaskFrequency: area.cleaningTaskId ? taskById.get(area.cleaningTaskId)?.frequency : undefined,
       locationTypeId: area.locationTypeId,
       locationTypeName: area.locationTypeName,
       buildingBlockId: area.buildingBlockId,
@@ -876,6 +1020,7 @@ function buildCleaningAreas(
       cleaningTaskId: unit.cleaningTaskId,
       cleaningTaskName: unit.cleaningTaskName,
       cleaningTaskDuration: unit.cleaningTaskId ? taskById.get(unit.cleaningTaskId)?.estimatedDuration : undefined,
+      cleaningTaskFrequency: unit.cleaningTaskId ? taskById.get(unit.cleaningTaskId)?.frequency : undefined,
       residentId: unit.residentId,
       residentName: unit.residentName,
       locationTypeId: unit.locationTypeId,
@@ -893,6 +1038,7 @@ function buildCleaningAreas(
       cleaningTaskId: apartment.cleaningTaskId,
       cleaningTaskName: apartment.cleaningTaskName,
       cleaningTaskDuration: apartment.cleaningTaskId ? taskById.get(apartment.cleaningTaskId)?.estimatedDuration : undefined,
+      cleaningTaskFrequency: apartment.cleaningTaskId ? taskById.get(apartment.cleaningTaskId)?.frequency : undefined,
       residentId: apartment.residentId,
       residentName: apartment.residentName,
       locationTypeId: apartment.locationTypeId,
